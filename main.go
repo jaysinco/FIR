@@ -15,16 +15,14 @@ import (
 func main() {
 	p1 := newRobot(0.1, 0.1, "")
 	p2 := newRobot(0.1, 0.1, "")
-	train(p1, p2, 50000, true)
-	p1.SavePolicy("black_50000_3x3by3.plc")
-	p2.SavePolicy("white_50000_3x3by3.plc")
+	train(p1, p2, 5000, true)
+	// p1.SavePolicy("black_3x3by3.plc")
+	// p2.SavePolicy("white_3x3by3.plc")
 	p1.ExploreRate = 0.0
 	p2.ExploreRate = 0.0
 	train(p1, p2, 1000, false)
 	h1 := new(human)
-	play(h1, p2, false, true)
-	// fmt.Println(plc2str("black_50000_3x3by3.plc"))
-
+	play(p1, h1, false, true)
 }
 
 const (
@@ -40,7 +38,6 @@ const (
 	even
 )
 
-var _states map[state]symbol
 var seed = rand.New(rand.NewSource(time.Now().Unix()))
 
 type symbol int8
@@ -132,31 +129,6 @@ func (s *state) String() string {
 	return buf.String()
 }
 
-func getAllStateImpl(current state, sym symbol) {
-	for _, mv := range current.MoveOptions(sym) {
-		future := current
-		future[mv.Pos.Row][mv.Pos.Col] = sym
-		if _, ok := _states[future]; !ok {
-			_states[future] = future.Winner()
-		}
-		if _states[future] == vacant {
-			next := black
-			if sym == black {
-				next = white
-			}
-			getAllStateImpl(future, next)
-		}
-	}
-}
-
-func getAllState() {
-	if _states != nil {
-		return
-	}
-	_states = make(map[state]symbol)
-	getAllStateImpl(state{}, black)
-}
-
 type policy map[state]float64
 
 func plc2str(policyFile string) string {
@@ -218,25 +190,6 @@ func (r *robot) SetSymbol(sym symbol) {
 	r.Symbol = sym
 	if r.Policy == nil {
 		r.Policy = make(policy)
-		r.DefaultPolicy()
-	}
-}
-
-func (r *robot) DefaultPolicy() {
-	if _states == nil {
-		getAllState()
-	}
-	for st, sym := range _states {
-		var value float64
-		switch sym {
-		case vacant:
-			value = 0.5
-		case r.Symbol:
-			value = 1.0
-		default:
-			value = 0.0
-		}
-		r.Policy[st] = value
 	}
 }
 
@@ -275,7 +228,18 @@ func (r *robot) PickMove(current state, options []move) move {
 	for _, mv := range options {
 		future := current
 		future[mv.Pos.Row][mv.Pos.Col] = r.Symbol
-		value := r.Policy[future]
+		value, ok := r.Policy[future]
+		if !ok {
+			switch future.Winner() {
+			case r.Symbol:
+				value = 1.0
+			case vacant:
+				value = 0.5
+			default:
+				value = 0.0
+			}
+			r.Policy[future] = value
+		}
 		if value > maxValue {
 			best = mv
 			maxValue = value
@@ -288,7 +252,17 @@ func (r *robot) FeedReward(history []state, reward float64) {
 	target := reward
 	for i := len(history) - 1; i >= 0; i-- {
 		state := history[i]
-		value := r.Policy[state]
+		value, ok := r.Policy[state]
+		if !ok {
+			switch state.Winner() {
+			case r.Symbol:
+				value = 1.0
+			case vacant:
+				value = 0.5
+			default:
+				value = 0.0
+			}
+		}
 		value += r.LearnSpeed * (target - value)
 		r.Policy[state] = value
 		target = value
